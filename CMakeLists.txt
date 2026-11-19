@@ -6,17 +6,10 @@ project(Translator LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_path(NLOHMANN_JSON_INCLUDE_DIR
-    NAMES nlohmann/json.hpp
-    PATHS /opt/homebrew/opt/nlohmann-json/include
-    NO_CMAKE_FIND_ROOT_PATH
-    REQUIRED
-)
-
 add_executable(translator main.cpp)
 
 target_include_directories(translator PRIVATE
-    ${NLOHMANN_JSON_INCLUDE_DIR}
+    /opt/homebrew/opt/nlohmann-json/include
 )
 
 target_link_options(translator PRIVATE
@@ -28,4 +21,5 @@ target_link_options(translator PRIVATE
 
 set_target_properties(translator PROPERTIES
     SUFFIX ".js"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
