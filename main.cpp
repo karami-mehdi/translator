@@ -103,6 +103,36 @@ int main()
                        res.status = 204;
                    });
 
+    server.Get("/test-mymemory",
+               [](const httplib::Request &req,
+                  httplib::Response &res)
+               {
+                   try
+                   {
+                       string translated =
+                           translateText("Hello", "en", "fa");
+
+                       json result;
+                       result["status"] = "success";
+                       result["translation"] = translated;
+
+                       res.set_content(
+                           result.dump(),
+                           "application/json");
+                   }
+                   catch (const exception &e)
+                   {
+                       json error;
+                       error["status"] = "failed";
+                       error["error"] = e.what();
+
+                       res.status = 500;
+                       res.set_content(
+                           error.dump(),
+                           "application/json");
+                   }
+               });
+
     server.Post("/translate",
                 [&allowedOrigin](const httplib::Request &req,
                                  httplib::Response &res)
@@ -156,9 +186,9 @@ int main()
 
     const char *portEnv = std::getenv("PORT");
     int port = portEnv ? std::stoi(portEnv) : 8080;
-    
+
     cout << "Server listening on port: " << port << endl;
-    
+
     bool started = server.listen("0.0.0.0", port);
 
     curl_global_cleanup();
