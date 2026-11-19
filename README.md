@@ -1,50 +1,121 @@
 # Translator
 
-A web-based translator built with **C++17** and **HTML, CSS, and JavaScript**. The application uses a local C++ HTTP server to connect the web interface to the MyMemory Translation API.
+A text translation application developed in C++, providing a web interface for translating input text between English and Persian using an online translation service.
+
+[Translator URL](https://karami-mehdi.github.io/translator)
+
 
 ## Architecture
 
 Layers:
-- **Frontend:** Web Browser (HTML, CSS, and JavaScript)
-- **Backend:** A C++17 HTTP server, powered by `cpp-httplib`, which handles requests, validates input, and communicates with the translation service.
+- **Frontend:** Web Application (HTML, CSS, and JavaScript)
+- **Backend:** Written in C++, the backend manages translation requests, processes API responses, and communicates input data and translation results to the frontend.
+  - **WebAssembly:** The C++ backend is compiled into WebAssembly by `Emscripten` and runs directly in the browser.
 - **Translation API:** `MyMemory` provides translations through HTTPS requests.
 
+### Diagram 1. Application Architecture
 ```text
-Web Browser          C++ Backend              Translation
-(Frontend)              Server                    API
-   │                      │                        │
-   │                      │                        │
-   │    Input Text        │                        │
-   │─────────────────────►│                        │
-   │                      │   Translation Request  │
-   │                      │───────────────────────►│
-   │                      │                        │
-   │                      │   Translated Text      │
-   │                      │◄───────────────────────│
-   │    JSON Response     │                        │
-   │◄─────────────────────│                        │
-   │                      │                        │
-   │                      │                        │
-index.html              main.cpp             MyMemory API
+Web Application        C++ Backend               Translation
+  (Frontend)                 │                       API
+      │                      │                        │
+      │    Input Text        │                        │
+      │─────────────────────►│                        │
+      │                      │   Translation Request  │
+      │                      │───────────────────────►│
+      │                      │                        │
+      │                      │   Translated Text      │
+      │                      │◄───────────────────────│
+      │    JSON Response     │                        │
+      │◄─────────────────────│                        │
+      │                      │                        │
+   index.html              main.cpp              MyMemory API
 ```
 
-## Installation & Execution
+### Diagram 2. Compilation and Execution Architecture
+```text
+ C++ Source Code
+     main.cpp
+         │
+         ▼
+Emscripten Toolchain
+(CMake + Emscripten)
+         │
+         │         ┌───► translator.wasm ───┐
+         ▼         │      (WebAssembly)     │
+ Compiled Output ──┤                        ├──► Web Browser
+                   │                        │  (Execution Env.)
+                   └────► translator.js ────┘
+                       (JavaScript Runtime)
+```
 
-### 1. Install Dependencies (macOS)
+## Translation API
 
-Using Homebrew:
+[MyMemory Translation API](https://mymemory.translated.net)
+
+### API Endpoint
+
+The C++ backend sends an asynchronous **GET** request to:
+
+```text
+https://api.mymemory.translated.net/get
+```
+
+The request includes the URL-encoded input text (`q`) and language pair (`langpair`). The application supports:
+
+- English to Persian (`en|fa`)
+- Persian to English (`fa|en`)
+
+
+### Example Request and Response
+
+Example request:
 
 ```bash
-$ brew install cmake curl nlohmann-json cpp-httplib
+curl --get "https://api.mymemory.translated.net/get" \
+  --data-urlencode "q=Hello, how are you?" \
+  --data-urlencode "langpair=en|fa"
 ```
 
-### 2. Configure the Project
-```text
-└── CMakeLists.txt    # CMake Build Configuration
+Example response:
+
+```json
+{
+  "responseStatus": 200,
+  "responseData": {
+    "translatedText": "سلام، حال شما چطور است؟"
+  }
+  ...
+}
 ```
+
+
+## Build & Execution
+
+This is the **macOS** build guide. For Linux and Windows, adapt the steps to your system.
+
+To build the project from source:
+
+### 1. Install Dependencies
+
+The project requires:
+- **CMake**
+- **Emscripten SDK**
+- **nlohmann-json** (JSON for Modern C++)
+
+Install dependencies using Homebrew:
 
 ```bash
-$ cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+$ brew install cmake emscripten nlohmann-json
+```
+
+> **Note:** The current `CMakeLists.txt` contains a Homebrew-specific include path for `nlohmann-json` (`/opt/homebrew/opt/nlohmann-json/include`). On Linux and Windows, update the path in `CMakeLists.txt` to the include directory provided by your package manager before configuring the project.
+
+### 2. Configure
+
+From the repository root, run:
+
+```bash
+$ emcmake cmake -S . -B build
 ```
 
 ### 3. Build
@@ -53,42 +124,21 @@ $ cmake -S . -B build -DCMAKE_PREFIX_PATH="$(brew --prefix)"
 $ cmake --build build
 ```
 
+The build generates `translator.js` and `translator.wasm` in the project root.
+
 ### 4. Run
 
+The application runs in a web browser. Serve the project directory over HTTP, for example:
+
 ```bash
-$ ./build/Translator
+$ python3 -m http.server 8000
 ```
 
-The server will start at:
+Then on your broswer, open:
 
-```text
-http://localhost:8080
+```url
+http://localhost:8000
 ```
 
-Open this address in your browser to use the translator.
+The browser loads the frontend and the generated WebAssembly module. A separate C++ HTTP server is not required.
 
-## Translation API
-
-https://mymemory.translated.net
-
-### API Endpoint
-
-*POST `/translate`*
-
-Example request:
-
-```json
-{
-  "text": "Hello, how are you?",
-  "source": "en",
-  "target": "fa"
-}
-```
-
-Example response:
-
-```json
-{
-  "translation": "سلام، حال شما چطور است؟"
-}
-```
