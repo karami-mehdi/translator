@@ -1,167 +1,184 @@
 
-#include <iostream>
-#include <fstream>
 #include <string>
-
-#include <httplib.h>
-#include <curl/curl.h>
-#include <nlohmann/json.hpp>
-
-#include <cstdlib>
 #include <stdexcept>
+#include <cctype>
+#include <cstring>
+
+#include <emscripten.h>
+#include <emscripten/fetch.h>
+#include <nlohmann/json.hpp>
 
 using namespace std;
 using json = nlohmann::json;
 
-// Receive HTTP response data
-size_t WriteCallback(void *contents, size_t size,
-                     size_t nmemb, string *output)
+// Send successful translations to the frontend.
+EM_JS(void, notifySuccess, (const char *translation), {
+    if (window.onCppTranslationSuccess) {
+        window.onCppTranslationSuccess(UTF8ToString(translation));
+    }
+});
+
+// Send errors to the frontend.
+EM_JS(void, notifyError, (const char *message), {
+    if (window.onCppTranslationError) {
+        window.onCppTranslationError(UTF8ToString(message));
+    }
+});
+
+// URL-encode the input text.
+string urlEncode(const string &value)
 {
-    size_t total = size * nmemb;
-    output->append(static_cast<char *>(contents), total);
-    return total;
-}
+    const char hex[] = "0123456789ABCDEF";
+    string encoded;
 
-// MyMemory translation function
-string translateText(const string &text,
-                     const string &source,
-                     const string &target)
-{
-
-    CURL *curl = curl_easy_init();
-
-    if (!curl)
-        throw runtime_error("Could not initialize CURL.");
-
-    char *encoded = curl_easy_escape(
-        curl, text.c_str(), static_cast<int>(text.length()));
-
-    if (!encoded)
+    for (unsigned char c : value)
     {
-        curl_easy_cleanup(curl);
-        throw runtime_error("Could not encode input text.");
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' ||
+            c == '.' || c == '~')
+        {
+            encoded += static_cast<char>(c);
+        }
+        else
+        {
+            encoded += '%';
+            encoded += hex[c >> 4];
+            encoded += hex[c & 15];
+        }
     }
 
-    string url =
-        "https://api.mymemory.translated.net/get?q=" +
-        string(encoded) +
-        "&langpair=" + source + "%7C" + target;
-
-    curl_free(encoded);
-
-    string response;
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Translator/1.0");
-
-    CURLcode result = curl_easy_perform(curl);
-
-    long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
-
-    curl_easy_cleanup(curl);
-
-    if (result != CURLE_OK)
-        throw runtime_error(curl_easy_strerror(result));
-
-    if (status != 200)
-        throw runtime_error("MyMemory HTTP error: " + to_string(status));
-
-    json data = json::parse(response);
-
-    if (data.value("responseStatus", 0) != 200)
-        throw runtime_error(
-            data.value("responseDetails", "Translation failed."));
-
-    return data["responseData"]["translatedText"].get<string>();
+    return encoded;
 }
 
-int main()
+// Handle a successful HTTP response.
+void onFetchSuccess(emscripten_fetch_t *fetch)
 {
+    try
+    {
+        if (fetch->status != 200)
+        {
+            throw runtime_error(
+                "MyMemory HTTP error: " + to_string(fetch->status));
+        }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+        string response(fetch->data, fetch->numBytes);
+        json data = json::parse(response);
 
-    httplib::Server server;
-    const string allowedOrigin = "https://karami-mehdi.github.io";
+        if (!data.contains("responseStatus") ||
+            data["responseStatus"].get<int>() != 200)
+        {
+            string details = "Translation failed.";
 
-    server.Options("/translate",
-                   [&allowedOrigin](const httplib::Request &,
-                                    httplib::Response &res)
-                   {
-                       res.set_header("Access-Control-Allow-Origin",
-                                      allowedOrigin);
-                       res.set_header("Access-Control-Allow-Methods",
-                                      "POST, OPTIONS");
-                       res.set_header("Access-Control-Allow-Headers",
-                                      "Content-Type");
+            if (data.contains("responseDetails") &&
+                data["responseDetails"].is_string())
+            {
+                details = data["responseDetails"].get<string>();
+            }
 
-                       res.status = 204;
-                   });
+            throw runtime_error(details);
+        }
 
-    server.Post("/translate",
-                [&allowedOrigin](const httplib::Request &req,
-                                 httplib::Response &res)
-                {
-                    res.set_header("Access-Control-Allow-Origin", allowedOrigin);
-                    res.set_header("Cache-Control", "no-store");
+        if (!data.contains("responseData") ||
+            !data["responseData"].contains("translatedText") ||
+            !data["responseData"]["translatedText"].is_string())
+        {
+            throw runtime_error("Invalid translation response.");
+        }
 
-                    try
-                    {
-                        json request = json::parse(req.body);
+        string translation =
+            data["responseData"]["translatedText"].get<string>();
 
-                        string text = request.at("text").get<string>();
-                        string source = request.at("source").get<string>();
-                        string target = request.at("target").get<string>();
+        notifySuccess(translation.c_str());
+    }
+    catch (const exception &e)
+    {
+        notifyError(e.what());
+    }
 
-                        if (text.empty() || text.size() > 4000)
-                        {
-                            throw runtime_error(
-                                "Please enter between 1 and 4000 bytes of text.");
-                        }
+    emscripten_fetch_close(fetch);
+}
 
-                        if (!((source == "en" && target == "fa") ||
-                              (source == "fa" && target == "en")))
-                        {
-                            throw runtime_error("Unsupported language pair.");
-                        }
+// Handle a failed HTTP request.
+void onFetchError(emscripten_fetch_t *fetch)
+{
+    string message = "Could not contact MyMemory.";
 
-                        string translated =
-                            translateText(text, source, target);
+    if (fetch->status != 0)
+    {
+        message += " HTTP status: " + to_string(fetch->status);
+    }
 
-                        json result;
-                        result["translation"] = translated;
+    notifyError(message.c_str());
 
-                        res.set_content(
-                            result.dump(),
-                            "application/json; charset=utf-8");
-                    }
-                    catch (const exception &e)
-                    {
+    emscripten_fetch_close(fetch);
+}
 
-                        res.status = 400;
+// Exported C++ function callable from JavaScript.
+extern "C"
+{
+    EMSCRIPTEN_KEEPALIVE
+    void translate(const char *inputText,
+                   const char *source,
+                   const char *target)
+    {
+        try
+        {
+            if (!inputText || !source || !target)
+            {
+                throw runtime_error("Invalid translation request.");
+            }
 
-                        json error;
-                        error["error"] = e.what();
+            string text = inputText;
+            string sourceLanguage = source;
+            string targetLanguage = target;
 
-                        res.set_content(
-                            error.dump(),
-                            "application/json; charset=utf-8");
-                    }
-                });
+            if (text.empty())
+            {
+                throw runtime_error("Please enter some text.");
+            }
 
-    const char *portEnv = std::getenv("PORT");
-    int port = portEnv ? std::stoi(portEnv) : 8080;
+            // MyMemory documents a maximum of 500 bytes for q.
+            if (text.size() > 500)
+            {
+                throw runtime_error(
+                    "Text exceeds MyMemory's 500-byte limit.");
+            }
 
-    cout << "Server listening on port: " << port << endl;
+            if (!((sourceLanguage == "en" && targetLanguage == "fa") ||
+                  (sourceLanguage == "fa" && targetLanguage == "en")))
+            {
+                throw runtime_error("Unsupported language pair.");
+            }
 
-    bool started = server.listen("0.0.0.0", port);
+            string url =
+                "https://api.mymemory.translated.net/get?q=" +
+                urlEncode(text) +
+                "&langpair=" +
+                sourceLanguage + "%7C" + targetLanguage;
 
-    curl_global_cleanup();
+            emscripten_fetch_attr_t attributes;
+            emscripten_fetch_attr_init(&attributes);
 
-    return started ? 0 : 1;
+            // requestMethod is a fixed-size character array.
+            strncpy(attributes.requestMethod, "GET",
+                    sizeof(attributes.requestMethod) - 1);
+
+            attributes.requestMethod[
+                sizeof(attributes.requestMethod) - 1
+            ] = '\0';
+
+            attributes.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+            attributes.onsuccess = onFetchSuccess;
+            attributes.onerror = onFetchError;
+            attributes.timeoutMSecs = 30000;
+
+            emscripten_fetch(&attributes, url.c_str());
+        }
+        catch (const exception &e)
+        {
+            notifyError(e.what());
+        }
+    }
 }
