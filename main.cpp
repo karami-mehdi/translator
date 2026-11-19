@@ -133,6 +133,50 @@ int main()
                    }
                });
 
+    server.Get("/check-ip",
+               [](const httplib::Request &req,
+                  httplib::Response &res)
+               {
+                   CURL *curl = curl_easy_init();
+
+                   if (!curl)
+                   {
+                       res.status = 500;
+                       return;
+                   }
+
+                   string ip;
+
+                   curl_easy_setopt(
+                       curl, CURLOPT_URL,
+                       "https://api.ipify.org");
+
+                   curl_easy_setopt(
+                       curl, CURLOPT_WRITEFUNCTION,
+                       WriteCallback);
+
+                   curl_easy_setopt(
+                       curl, CURLOPT_WRITEDATA, &ip);
+
+                   curl_easy_setopt(
+                       curl, CURLOPT_TIMEOUT, 10L);
+
+                   CURLcode result = curl_easy_perform(curl);
+
+                   curl_easy_cleanup(curl);
+
+                   if (result != CURLE_OK)
+                   {
+                       res.status = 500;
+                       res.set_content(
+                           curl_easy_strerror(result),
+                           "text/plain");
+                       return;
+                   }
+
+                   res.set_content(ip, "text/plain");
+               });
+
     server.Post("/translate",
                 [&allowedOrigin](const httplib::Request &req,
                                  httplib::Response &res)
