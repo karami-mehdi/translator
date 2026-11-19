@@ -154,14 +154,11 @@ int main()
                     }
                 });
 
-    cout << "\n====================================\n";
-    cout << "              TRANSLATOR\n";
-    cout << "====================================\n";
-    cout << "Server listening on port: " << port << endl;
-    
     const char *portEnv = std::getenv("PORT");
     int port = portEnv ? std::stoi(portEnv) : 8080;
-
+    
+    cout << "Server listening on port: " << port << endl;
+    
     bool started = server.listen("0.0.0.0", port);
 
     curl_global_cleanup();
